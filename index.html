@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Débits de boissons — carte de chaleur</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background: #f3f6fa;
+      color: #182230;
+      font-family: Arial, sans-serif;
+    }
+
+    main {
+      max-width: 1200px;
+      margin: 25px auto;
+      padding: 0 20px;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+      text-align: center;
+    }
+
+    .description {
+      margin-bottom: 20px;
+      color: #667085;
+      text-align: center;
+    }
+
+    .barre {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      gap: 15px;
+    }
+
+    button {
+      padding: 9px 14px;
+      background: #163a63;
+      color: white;
+      border: 0;
+      border-radius: 7px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #24598f;
+    }
+
+    #region-active {
+      color: #344054;
+      font-weight: bold;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #eef3f7;
+      border: 1px solid #dce3eb;
+      border-radius: 12px;
+      box-shadow: 0 5px 20px rgba(0, 0, 0, 0.08);
+    }
+
+    .region-clic {
+      fill: transparent;
+      stroke: #586b80;
+      stroke-width: 0.7;
+      cursor: pointer;
+    }
+
+    .region-clic:hover {
+      stroke: #142e4b;
+      stroke-width: 2;
+    }
+
+    .ville {
+      fill: #142e4b;
+      font-size: 9px;
+      font-weight: bold;
+      paint-order: stroke;
+      stroke: white;
+      stroke-width: 3px;
+      pointer-events: none;
+    }
+
+    .point-ville {
+      fill: #142e4b;
+      stroke: white;
+      stroke-width: 1px;
+      pointer-events: none;
+    }
+
+    #erreur {
+      color: #b42318;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>Débits de boissons actifs en France métropolitaine</h1>
+
+    <p class="description">
+      Intensité par commune · Cliquez sur une région pour explorer les grandes villes
+    </p>
+
+    <div class="barre">
+      <span id="region-active">Vue nationale</span>
+      <button id="retour">← Retour à la France</button>
+    </div>
+
+    <svg id="carte" viewBox="0 0 1100 800"></svg>
+    <p id="erreur"></p>
+  </main>
+
+  <script>
+    const largeur = 1100;
+    const hauteur = 800;
+
+    const villes = [
+      { nom: "Paris", region: "11", coord: [2.35, 48.86] },
+      { nom: "Lyon", region: "84", coord: [4.84, 45.76] },
+      { nom: "Grenoble", region: "84", coord: [5.73, 45.19] },
+      { nom: "Saint-Étienne", region: "84", coord: [4.39, 45.44] },
+      { nom: "Clermont-Ferrand", region: "84", coord: [3.08, 45.78] },
+      { nom: "Marseille", region: "93", coord: [5.37, 43.30] },
+      { nom: "Nice", region: "93", coord: [7.26, 43.70] },
+      { nom: "Toulon", region: "93", coord: [5.93, 43.12] },
+      { nom: "Toulouse", region: "76", coord: [1.44, 43.60] },
+      { nom: "Montpellier", region: "76", coord: [3.88, 43.61] },
+      { nom: "Bordeaux", region: "75", coord: [-0.58, 44.84] },
+      { nom: "Limoges", region: "75", coord: [1.26, 45.83] },
+      { nom: "Poitiers", region: "75", coord: [0.34, 46.58] },
+      { nom: "Nantes", region: "52", coord: [-1.55, 47.22] },
+      { nom: "Angers", region: "52", coord: [-0.56, 47.47] },
+      { nom: "Rennes", region: "53", coord: [-1.68, 48.11] },
+      { nom: "Brest", region: "53", coord: [-4.49, 48.39] },
+      { nom: "Lille", region: "32", coord: [3.06, 50.63] },
+      { nom: "Amiens", region: "32", coord: [2.30, 49.89] },
+      { nom: "Strasbourg", region: "44", coord: [7.75, 48.58] },
+      { nom: "Metz", region: "44", coord: [6.18, 49.12] },
+      { nom: "Nancy", region: "44", coord: [6.18, 48.69] },
+      { nom: "Dijon", region: "27", coord: [5.04, 47.32] },
+      { nom: "Besançon", region: "27", coord: [6.03, 47.24] },
+      { nom: "Rouen", region: "28", coord: [1.10, 49.44] },
+      { nom: "Caen", region: "28", coord: [-0.37, 49.18] },
+      { nom: "Orléans", region: "24", coord: [1.91, 47.90] },
+      { nom: "Tours", region: "24", coord: [0.68, 47.39] },
+      { nom: "Ajaccio", region: "94", coord: [8.74, 41.93] },
+      { nom: "Bastia", region: "94", coord: [9.45, 42.70] }
+    ];
+    
+
+    Promise.all([
+      d3.csv("bars_par_commune_france.csv"),
+      d3.json("communes-1000m.geojson"),
+      d3.json("regions-1000m.geojson")
+    ])
+    .then(([lignes, communesGeoJSON, regionsGeoJSON]) => {
+      const svg = d3.select("#carte");
+      const definitions = svg.append("defs");
+
+      const communes = communesGeoJSON.features.filter(
+        d => !/^(97|98)/.test(String(d.properties.code))
+      );
+
+      const regions = regionsGeoJSON.features.filter(
+        d => !/^(97|98)/.test(String(d.properties.code))
+      );
+
+      const nombres = new Map(
+        lignes.map(d => [String(d.code), +d.nombre_bars])
+      );
+
+      // Cadrage fixe : métropole et Corse.
+      const cadre = {
+        type: "MultiPoint",
+        coordinates: [[-5.5, 41], [10, 51.5]]
+      };
+
+      const projection = d3.geoMercator()
+        .fitExtent([[80, 35], [largeur - 80, hauteur - 35]], cadre);
+
+      const chemin = d3.geoPath(projection);
+
+      // Premier filtre : taches de chaleur douces.
+      definitions.append("filter")
+        .attr("id", "chaleur")
+        .attr("x", "-30%")
+        .attr("y", "-30%")
+        .attr("width", "160%")
+        .attr("height", "160%")
+        .append("feGaussianBlur")
+        .attr("stdDeviation", 1 );
+
+      // Deuxième filtre : arrière-plan flou après sélection.
+      definitions.append("filter")
+        .attr("id", "arriere-plan-flou")
+        .attr("x", "-30%")
+        .attr("y", "-30%")
+        .attr("width", "160%")
+        .attr("height", "160%")
+        .append("feGaussianBlur")
+        .attr("stdDeviation", 4);
+
+      // Découpage de la carte : les taches ne débordent pas
+      // des contours des régions métropolitaines.
+      const clipFrance = definitions.append("clipPath")
+        .attr("id", "clip-france");
+
+      clipFrance.selectAll("path")
+        .data(regions)
+        .join("path")
+        .attr("d", chemin);
+
+      const clipRegion = definitions.append("clipPath")
+        .attr("id", "clip-region");
+
+      const clipRegionPath = clipRegion.append("path");
+
+      // Une tache par commune ayant au moins un établissement.
+      // L'intensité est limitée pour qu'une grande ville
+      // n'écrase pas toutes les autres.
+      const points = communes
+        .map(commune => {
+          const nombre = nombres.get(String(commune.properties.code)) || 0;
+
+          if (nombre <= 0) return null;
+
+          const position = projection(d3.geoCentroid(commune));
+
+          if (!position || !position.every(Number.isFinite)) {
+            return null;
+          }
+
+          return {
+            x: position[0],
+            y: position[1],
+            nombre: nombre
+          };
+        })
+        .filter(Boolean);
+
+      const sourceChaleur = definitions.append("g")
+        .attr("id", "source-chaleur");
+
+      sourceChaleur.selectAll("circle")
+        .data(points)
+        .join("circle")
+        .attr("cx", d => d.x)
+        .attr("cy", d => d.y)
+        .attr("r", d => 4 + Math.min(2, Math.sqrt(d.nombre) * 0.8))
+        .attr("fill", d =>
+          d.nombre >= 40 ? "#d73027" :
+          d.nombre >= 15 ? "#f46d43" :
+          d.nombre >= 5 ? "#fdae61" :
+          "#fee08b"
+        )
+        .attr("opacity", d =>
+          d.nombre >= 15 ? 0.90 : 0.75
+        );
+
+      // Tout le contenu est zoomé ensemble.
+      const contenu = svg.append("g");
+
+      // Fond de carte : il sera flouté lors de la sélection.
+      const arrierePlan = contenu.append("g");
+
+      arrierePlan.selectAll("path")
+        .data(regions)
+        .join("path")
+        .attr("d", chemin)
+        .attr("fill", "#f9fbfd")
+        .attr("stroke", "#aebdca")
+        .attr("stroke-width", 0.8);
+
+      arrierePlan.append("use")
+        .attr("href", "#source-chaleur")
+        .attr("clip-path", "url(#clip-france)")
+        .attr("filter", "url(#chaleur)")
+      
+
+      // Copie nette de la région sélectionnée, cachée au départ.
+      const premierPlan = contenu.append("g")
+        .style("display", "none")
+        .style("pointer-events", "none");
+
+      premierPlan.append("path")
+        .attr("class", "region-selectionnee")
+        .attr("fill", "#f9fbfd")
+        .attr("stroke", "#163a63")
+        .attr("stroke-width", 1.5);
+
+      premierPlan.append("use")
+        .attr("href", "#source-chaleur")
+        .attr("clip-path", "url(#clip-region)")
+        .attr("filter", "url(#chaleur)")
+      ;
+
+      const groupeVilles = premierPlan.append("g");
+
+      // Couche transparente pour conserver le clic sur les régions.
+      const zonesClic = contenu.append("g");
+
+      zonesClic.selectAll("path")
+        .data(regions)
+        .join("path")
+        .attr("class", "region-clic")
+        .attr("d", chemin)
+        .on("click", (event, region) => {
+          selectionnerRegion(region);
+        });
+        const nomsGrandesVilles = new Set([
+  "Paris",
+  "Marseille",
+  "Lyon",
+  "Toulouse",
+  "Nice",
+  "Nantes",
+  "Montpellier",
+  "Strasbourg",
+  "Bordeaux",
+  "Lille"
+]);
+
+const villesNationales = contenu.append("g")
+  .attr("id", "villes-nationales")
+  .style("pointer-events", "none");
+
+const etiquettesNationales = villesNationales
+  .selectAll("g")
+  .data(villes.filter(ville => nomsGrandesVilles.has(ville.nom)))
+  .join("g")
+  .attr("transform", d => {
+    const [x, y] = projection(d.coord);
+    return `translate(${x},${y})`;
+  });
+
+etiquettesNationales.append("circle")
+  .attr("class", "point-ville")
+  .attr("r", 2);
+
+etiquettesNationales.append("text")
+  .attr("class", "ville")
+  .attr("x", 5)
+  .attr("y", -5)
+  .text(d => d.nom);
+
+      const zoom = d3.zoom()
+        .scaleExtent([1, 8])
+        .on("zoom", event => {
+          contenu.attr("transform", event.transform);
+        });
+
+      svg.call(zoom);
+      svg.on("dblclick.zoom", null);
+
+      function selectionnerRegion(region) {
+        villesNationales.style("display", "none");
+        const code = String(region.properties.code);
+        const limites = chemin.bounds(region);
+
+        const largeurRegion = limites[1][0] - limites[0][0];
+        const hauteurRegion = limites[1][1] - limites[0][1];
+
+        if (!Number.isFinite(largeurRegion) ||
+            !Number.isFinite(hauteurRegion) ||
+            largeurRegion <= 0 ||
+            hauteurRegion <= 0) {
+          console.error("Contour de région invalide :", region);
+          return;
+        }
+
+        const echelle = Math.min(
+          7,
+          0.82 / Math.max(
+            largeurRegion / largeur,
+            hauteurRegion / hauteur
+          )
+        );
+
+        const centreX = (limites[0][0] + limites[1][0]) / 2;
+        const centreY = (limites[0][1] + limites[1][1]) / 2;
+
+        const transformation = d3.zoomIdentity
+          .translate(
+            largeur / 2 - echelle * centreX,
+            hauteur / 2 - echelle * centreY
+          )
+          .scale(echelle);
+
+        clipRegionPath.attr("d", chemin(region));
+
+        premierPlan.select(".region-selectionnee")
+          .attr("d", chemin(region));
+
+        arrierePlan
+          .attr("filter", "url(#arriere-plan-flou)")
+          .attr("opacity", 0.45);
+
+        premierPlan.style("display", null);
+
+        const villesRegion = villes.filter(
+          ville => ville.region === code
+        );
+
+        const etiquettes = groupeVilles.selectAll("g")
+          .data(villesRegion, d => d.nom)
+          .join("g")
+          .attr("transform", d => {
+            const [x, y] = projection(d.coord);
+            return `translate(${x},${y})`;
+          });
+
+        etiquettes.selectAll("*").remove();
+
+        etiquettes.append("circle")
+          .attr("class", "point-ville")
+          .attr("r", 2);
+
+        etiquettes.append("text")
+          .attr("class", "ville")
+          .attr("x", 7)
+          .attr("y", -6)
+          .text(d => d.nom);
+
+        d3.select("#region-active")
+          .text(region.properties.nom);
+
+        svg.transition()
+          .duration(850)
+          .call(zoom.transform, transformation);
+      }
+
+      d3.select("#retour").on("click", () => {
+        svg.transition()
+          .duration(750)
+          .call(zoom.transform, d3.zoomIdentity)
+          .on("end", () => {
+            villesNationales.style("display", null);
+            premierPlan.style("display", "none");
+            arrierePlan
+              .attr("filter", null)
+              .attr("opacity", 1);
+            d3.select("#region-active").text("Vue nationale");
+          });
+      });
+
+      console.log(`${points.length} points de chaleur dessinés.`);
+    })
+    .catch(erreur => {
+      console.error(erreur);
+      d3.select("#erreur")
+        .text(`Erreur de chargement : ${erreur.message}`);
+    });
+  </script>
+</body>
+</html>
